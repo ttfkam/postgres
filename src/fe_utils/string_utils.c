@@ -541,8 +541,7 @@ appendShellStringNoError(PQExpBuffer buf, const char *str)
 
 /*
  * Append the given string to the buffer, with suitable quoting for passing
- * the string as a value, in a keyword/pair value in a libpq connection
- * string
+ * the string as a value in a keyword/value pair in a libpq connection string.
  */
 void
 appendConnStrVal(PQExpBuffer buf, const char *str)
@@ -625,10 +624,10 @@ appendPsqlMetaConnect(PQExpBuffer buf, const char *dbname)
 		PQExpBufferData connstr;
 
 		initPQExpBuffer(&connstr);
-		appendPQExpBuffer(&connstr, "dbname=");
+		appendPQExpBufferStr(&connstr, "dbname=");
 		appendConnStrVal(&connstr, dbname);
 
-		appendPQExpBuffer(buf, "-reuse-previous=on ");
+		appendPQExpBufferStr(buf, "-reuse-previous=on ");
 
 		/*
 		 * As long as the name does not contain a newline, SQL identifier

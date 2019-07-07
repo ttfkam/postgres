@@ -528,7 +528,7 @@ AppendAttributeTuples(Relation indexRelation, int numatts)
 static void
 UpdateIndexRelation(Oid indexoid,
 					Oid heapoid,
-					Oid parentIndexOid,
+					Oid parentIndexId,
 					IndexInfo *indexInfo,
 					Oid *collationOids,
 					Oid *classOids,
@@ -773,13 +773,13 @@ index_create(Relation heapRelation,
 				 errmsg("concurrent index creation on system catalog tables is not supported")));
 
 	/*
-	 * This case is currently not supported, but there's no way to ask for it
-	 * in the grammar anyway, so it can't happen.
+	 * This case is currently not supported.  There's no way to ask for it in
+	 * the grammar with CREATE INDEX, but it can happen with REINDEX.
 	 */
 	if (concurrent && is_exclusion)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg_internal("concurrent index creation for exclusion constraints is not supported")));
+				 errmsg("concurrent index creation for exclusion constraints is not supported")));
 
 	/*
 	 * We cannot allow indexing a shared relation after initdb (because
@@ -3278,6 +3278,8 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 
 	pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
 								  heapId);
+	pgstat_progress_update_param(PROGRESS_CREATEIDX_COMMAND,
+								 PROGRESS_CREATEIDX_COMMAND_REINDEX);
 	pgstat_progress_update_param(PROGRESS_CREATEIDX_INDEX_OID,
 								 indexId);
 

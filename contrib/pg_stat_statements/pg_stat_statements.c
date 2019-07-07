@@ -625,7 +625,7 @@ pgss_shmem_startup(void)
 
 	/*
 	 * Remove the persisted stats file so it's not included in
-	 * backups/replication slaves, etc.  A new file will be written on next
+	 * backups/replication standbys, etc.  A new file will be written on next
 	 * shutdown.
 	 *
 	 * Note: it's okay if the PGSS_TEXT_FILE is included in a basebackup,
@@ -1992,7 +1992,7 @@ qtext_load_file(Size *buffer_size)
 		return NULL;
 	}
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", PGSS_TEXT_FILE)));

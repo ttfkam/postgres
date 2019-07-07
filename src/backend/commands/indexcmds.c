@@ -498,8 +498,14 @@ DefineIndex(Oid relationId,
 	 * done.
 	 */
 	if (!OidIsValid(parentIndexId))
+	{
 		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
 									  relationId);
+		pgstat_progress_update_param(PROGRESS_CREATEIDX_COMMAND,
+									 stmt->concurrent ?
+									 PROGRESS_CREATEIDX_COMMAND_CREATE_CONCURRENTLY :
+									 PROGRESS_CREATEIDX_COMMAND_CREATE);
+	}
 
 	/*
 	 * No index OID to report yet
@@ -1053,12 +1059,10 @@ DefineIndex(Oid relationId,
 
 			memcpy(part_oids, partdesc->oids, sizeof(Oid) * nparts);
 
-			parentDesc = CreateTupleDescCopy(RelationGetDescr(rel));
+			parentDesc = RelationGetDescr(rel);
 			opfamOids = palloc(sizeof(Oid) * numberOfKeyAttributes);
 			for (i = 0; i < numberOfKeyAttributes; i++)
 				opfamOids[i] = get_opclass_family(classObjectId[i]);
-
-			table_close(rel, NoLock);
 
 			/*
 			 * For each partition, scan all existing indexes; if one matches
@@ -1079,6 +1083,26 @@ DefineIndex(Oid relationId,
 				int			maplen;
 
 				childrel = table_open(childRelid, lockmode);
+
+				/*
+				 * Don't try to create indexes on foreign tables, though. Skip
+				 * those if a regular index, or fail if trying to create a
+				 * constraint index.
+				 */
+				if (childrel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
+				{
+					if (stmt->unique || stmt->primary)
+						ereport(ERROR,
+								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+								 errmsg("cannot create unique index on partitioned table \"%s\"",
+										RelationGetRelationName(rel)),
+								 errdetail("Table \"%s\" contains partitions that are foreign tables.",
+										   RelationGetRelationName(rel))));
+
+					table_close(childrel, lockmode);
+					continue;
+				}
+
 				childidxs = RelationGetIndexList(childrel);
 				attmap =
 					convert_tuples_by_name_map(RelationGetDescr(childrel),
@@ -1239,13 +1263,12 @@ DefineIndex(Oid relationId,
 				heap_freetuple(newtup);
 			}
 		}
-		else
-			table_close(rel, NoLock);
 
 		/*
 		 * Indexes on partitioned tables are not themselves built, so we're
 		 * done here.
 		 */
+		table_close(rel, NoLock);
 		if (!OidIsValid(parentIndexId))
 			pgstat_progress_end_command();
 		return address;
@@ -2438,17 +2461,25 @@ ReindexTable(RangeVar *relation, int options, bool concurrent)
 									   RangeVarCallbackOwnsTable, NULL);
 
 	if (concurrent)
+	{
 		result = ReindexRelationConcurrently(heapOid, options);
+
+		if (!result)
+			ereport(NOTICE,
+					(errmsg("table \"%s\" has no indexes that can be reindexed concurrently",
+							relation->relname)));
+	}
 	else
+	{
 		result = reindex_relation(heapOid,
 								  REINDEX_REL_PROCESS_TOAST |
 								  REINDEX_REL_CHECK_CONSTRAINTS,
 								  options);
-
-	if (!result)
-		ereport(NOTICE,
-				(errmsg("table \"%s\" has no indexes",
-						relation->relname)));
+		if (!result)
+			ereport(NOTICE,
+					(errmsg("table \"%s\" has no indexes to reindex",
+							relation->relname)));
+	}
 
 	return heapOid;
 }
@@ -2485,7 +2516,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 	if (objectKind == REINDEX_OBJECT_SYSTEM && concurrent)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("concurrent reindex of system catalogs is not supported")));
+				 errmsg("cannot reindex system catalogs concurrently")));
 
 	/*
 	 * Get OID of object to reindex, being the database currently being used
@@ -2599,7 +2630,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 			if (!concurrent_warning)
 				ereport(WARNING,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("concurrent reindex is not supported for catalog relations, skipping all")));
+						 errmsg("cannot reindex system catalogs concurrently, skipping all")));
 			concurrent_warning = true;
 			continue;
 		}
@@ -2630,7 +2661,6 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 	foreach(l, relids)
 	{
 		Oid			relid = lfirst_oid(l);
-		bool		result;
 
 		StartTransactionCommand();
 		/* functions in indexes may want a snapshot set */
@@ -2638,11 +2668,13 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 
 		if (concurrent)
 		{
-			result = ReindexRelationConcurrently(relid, options);
+			(void) ReindexRelationConcurrently(relid, options);
 			/* ReindexRelationConcurrently() does the verbose output */
 		}
 		else
 		{
+			bool		result;
+
 			result = reindex_relation(relid,
 									  REINDEX_REL_PROCESS_TOAST |
 									  REINDEX_REL_CHECK_CONSTRAINTS,
@@ -2669,13 +2701,19 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
  * ReindexRelationConcurrently - process REINDEX CONCURRENTLY for given
  * relation OID
  *
- * The relation can be either an index or a table.  If it is a table, all its
- * valid indexes will be rebuilt, including its associated toast table
- * indexes.  If it is an index, this index itself will be rebuilt.
+ * 'relationOid' can either belong to an index, a table or a materialized
+ * view.  For tables and materialized views, all its indexes will be rebuilt,
+ * excluding invalid indexes and any indexes used in exclusion constraints,
+ * but including its associated toast table indexes.  For indexes, the index
+ * itself will be rebuilt.  If 'relationOid' belongs to a partitioned table
+ * then we issue a warning to mention these are not yet supported.
  *
  * The locks taken on parent tables and involved indexes are kept until the
  * transaction is committed, at which point a session lock is taken on each
  * relation.  Both of these protect against concurrent schema changes.
+ *
+ * Returns true if any indexes have been rebuilt (including toast table's
+ * indexes, when relevant), otherwise returns false.
  */
 static bool
 ReindexRelationConcurrently(Oid relationOid, int options)
@@ -2743,11 +2781,10 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 				MemoryContextSwitchTo(oldcontext);
 
-				/* A system catalog cannot be reindexed concurrently */
 				if (IsCatalogRelationOid(relationOid))
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot reindex a system catalog concurrently")));
+							 errmsg("cannot reindex system catalogs concurrently")));
 
 				/* Open relation to get its indexes */
 				heapRelation = table_open(relationOid, ShareUpdateExclusiveLock);
@@ -2837,11 +2874,10 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 			{
 				Oid			heapId = IndexGetRelation(relationOid, false);
 
-				/* A system catalog cannot be reindexed concurrently */
 				if (IsCatalogRelationOid(heapId))
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot reindex a system catalog concurrently")));
+							 errmsg("cannot reindex system catalogs concurrently")));
 
 				/* Save the list of relation OIDs in private context */
 				oldcontext = MemoryContextSwitchTo(private_context);
@@ -2923,6 +2959,8 @@ ReindexRelationConcurrently(Oid relationOid, int options)
 
 		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX,
 									  RelationGetRelid(heapRel));
+		pgstat_progress_update_param(PROGRESS_CREATEIDX_COMMAND,
+									 PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY);
 		pgstat_progress_update_param(PROGRESS_CREATEIDX_INDEX_OID,
 									 indexId);
 		pgstat_progress_update_param(PROGRESS_CREATEIDX_ACCESS_METHOD_OID,

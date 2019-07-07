@@ -229,7 +229,7 @@ static int
 flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 						 int nestingLevel, bool insideArraySubscript)
 {
-	/* position from begining of jsonpath data */
+	/* position from beginning of jsonpath data */
 	int32		pos = buf->len - JSONPATH_HDRSZ;
 	int32		chld;
 	int32		next;
@@ -563,6 +563,8 @@ printJsonPathItem(StringInfo buf, JsonPathItem *v, bool inKey,
 					appendStringInfoChar(buf, 'm');
 				if (v->content.like_regex.flags & JSP_REGEX_WSPACE)
 					appendStringInfoChar(buf, 'x');
+				if (v->content.like_regex.flags & JSP_REGEX_QUOTE)
+					appendStringInfoChar(buf, 'q');
 
 				appendStringInfoChar(buf, '"');
 			}

@@ -286,7 +286,7 @@ heapam_tuple_insert_speculative(Relation relation, TupleTableSlot *slot,
 
 static void
 heapam_tuple_complete_speculative(Relation relation, TupleTableSlot *slot,
-								  uint32 spekToken, bool succeeded)
+								  uint32 specToken, bool succeeded)
 {
 	bool		shouldFree = true;
 	HeapTuple	tuple = ExecFetchSlotHeapTuple(slot, true, &shouldFree);
@@ -1113,11 +1113,11 @@ heapam_scan_analyze_next_tuple(TableScanDesc scan, TransactionId OldestXmin,
 				 * concurrent transaction never commits.
 				 */
 				if (TransactionIdIsCurrentTransactionId(HeapTupleHeaderGetUpdateXid(targtuple->t_data)))
-					deadrows += 1;
+					*deadrows += 1;
 				else
 				{
 					sample_it = true;
-					liverows += 1;
+					*liverows += 1;
 				}
 				break;
 
@@ -2362,7 +2362,7 @@ heapam_scan_sample_next_block(TableScanDesc scan, SampleScanState *scanstate)
 
 			if (blockno >= hscan->rs_nblocks)
 			{
-				/* wrap to begining of rel, might not have started at 0 */
+				/* wrap to beginning of rel, might not have started at 0 */
 				blockno = 0;
 			}
 

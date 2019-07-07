@@ -1681,12 +1681,7 @@ GenerateRecoveryConf(PGconn *conn)
 	initPQExpBuffer(&conninfo_buf);
 	for (option = connOptions; option && option->keyword; option++)
 	{
-		/*
-		 * Do not emit this setting if: - the setting is "replication",
-		 * "dbname" or "fallback_application_name", since these would be
-		 * overridden by the libpqwalreceiver module anyway. - not set or
-		 * empty.
-		 */
+		/* Omit empty settings and those libpqwalreceiver overrides. */
 		if (strcmp(option->keyword, "replication") == 0 ||
 			strcmp(option->keyword, "dbname") == 0 ||
 			strcmp(option->keyword, "fallback_application_name") == 0 ||
@@ -2241,7 +2236,7 @@ main(int argc, char **argv)
 					format = 't';
 				else
 				{
-					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"\n",
+					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"",
 								 optarg);
 					exit(1);
 				}
@@ -2313,7 +2308,7 @@ main(int argc, char **argv)
 				compresslevel = atoi(optarg);
 				if (compresslevel < 0 || compresslevel > 9)
 				{
-					pg_log_error("invalid compression level \"%s\"\n", optarg);
+					pg_log_error("invalid compression level \"%s\"", optarg);
 					exit(1);
 				}
 				break;

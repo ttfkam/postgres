@@ -52,9 +52,6 @@
  * (v) make sure the lock level is set correctly for that operation
  * (vi) don't forget to document the option
  *
- * Note that we don't handle "oids" in relOpts because it is handled by
- * interpretOidsOption().
- *
  * The default choice for any new option should be AccessExclusiveLock.
  * In some cases the lock level can be reduced from there, but the lock
  * level chosen should always conflict with itself to ensure that multiple
@@ -147,7 +144,7 @@ static relopt_bool boolRelOpts[] =
 		{
 			"vacuum_index_cleanup",
 			"Enables index vacuuming and index cleanup",
-			RELOPT_KIND_HEAP,
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
 			ShareUpdateExclusiveLock
 		},
 		true

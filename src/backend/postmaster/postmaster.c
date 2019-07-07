@@ -404,7 +404,7 @@ static void BackendRun(Port *port) pg_attribute_noreturn();
 static void ExitPostmaster(int status) pg_attribute_noreturn();
 static int	ServerLoop(void);
 static int	BackendStartup(Port *port);
-static int	ProcessStartupPacket(Port *port, bool SSLdone);
+static int	ProcessStartupPacket(Port *port, bool secure_done);
 static void SendNegotiateProtocolVersion(List *unrecognized_protocol_options);
 static void processCancelRequest(Port *port, void *pkt);
 static int	initMasks(fd_set *rmask);
@@ -2520,7 +2520,7 @@ ClosePostmasterPorts(bool am_syslogger)
 	 * do this as early as possible, so that if postmaster dies, others won't
 	 * think that it's still running because we're holding the pipe open.
 	 */
-	if (close(postmaster_alive_fds[POSTMASTER_FD_OWN]))
+	if (close(postmaster_alive_fds[POSTMASTER_FD_OWN]) != 0)
 		ereport(FATAL,
 				(errcode_for_file_access(),
 				 errmsg_internal("could not close postmaster death monitoring pipe in child process: %m")));
@@ -4743,8 +4743,8 @@ retry:
 	}
 
 	/*
-	 * Queue a waiter for to signal when this child dies. The wait will be
-	 * handled automatically by an operating system thread pool.
+	 * Queue a waiter to signal when this child dies. The wait will be handled
+	 * automatically by an operating system thread pool.
 	 *
 	 * Note: use malloc instead of palloc, since it needs to be thread-safe.
 	 * Struct will be free():d from the callback function that runs on a
